@@ -1,0 +1,32 @@
+# === Rust 构建产物 ===
+/target/
+**/*.rs.bk
+*.pdb
+
+# === 环境与密钥（绝不能提交）===
+.env
+.env.local
+.env.*.local
+
+# === 运行期日志与临时文件 ===
+*.log
+build.log
+clippy.log
+test.log
+stdio_out.jsonl
+rel_out.jsonl
+payload.json
+stdio_err.log
+http_err.log
+http_err2.log
+
+# === 编辑器 / 系统 ===
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+Thumbs.db
+
+# 说明：本仓库是**二进制 crate**，`Cargo.lock` 必须提交（保证可复现构建），
+# 因此这里刻意不忽略它。

@@ -1,0 +1,18 @@
+# 统一换行符，避免 Windows 下 CRLF 与 Linux 下 LF 混提交产生无意义 diff。
+* text=auto eol=lf
+
+# Rust / TOML / Markdown 统一 LF
+*.rs   text eol=lf
+*.toml text eol=lf
+*.md   text eol=lf
+*.json text eol=lf
+
+# PowerShell 脚本保留 CRLF（Windows 上更稳妥）
+*.ps1  text eol=crlf
+*.bat  text eol=crlf
+*.cmd  text eol=crlf
+
+# 二进制文件不参与换行符转换
+*.exe  binary
+*.png  binary
+*.zip  binary

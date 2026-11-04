@@ -1,0 +1,91 @@
+[package]
+name = "cs-mcp"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+description = "CS2 esports MCP server: structured match data provider (no prose rendering)"
+license = "MIT"
+
+[[bin]]
+name = "cs-mcp"
+path = "src/main.rs"
+
+[dependencies]
+# --- MCP SDK (官方 rust-sdk) ---
+# 注意：0.x 已过时；3.8 起 HTTP 服务端 feature 名为 transport-streamable-http-server
+# （旧的 transport-sse-server 已移除）。
+rmcp = { version = "3.8", features = [
+    "server",
+    "transport-io",
+    "transport-streamable-http-server",
+    "macros",
+] }
+# HTTP / SSE 服务端挂载用
+axum = "0.8"
+
+# --- 运行时 ---
+tokio = { version = "1", features = ["full"] }
+
+# --- 序列化 ---
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# 说明：不单独依赖 schemars。rmcp 3.8 内部使用 schemars 1.x，
+# 统一 `use rmcp::schemars::JsonSchema;` 以避免两套 JsonSchema trait 冲突。
+
+# --- HTTP 客户端 ---
+# 注意：0.13 没有 `rustls-tls` feature；rustls 由默认的 `default-tls` 提供。
+reqwest = { version = "0.13", default-features = false, features = [
+    "json",
+    "rustls",
+    "gzip",
+] }
+
+# --- 错误 ---
+thiserror = "2"
+anyhow = "1"
+
+# --- 时间（固定 +08:00）---
+chrono = { version = "0.4", features = ["serde"] }
+
+# --- 缓存 / 限流 ---
+# moka 默认零 feature，必须显式开 future
+moka = { version = "0.12", features = ["future"] }
+governor = "0.10"
+
+# --- 抓取（S4 起启用；HLTV 已剔除时此依赖暂不使用）---
+scraper = "0.29"
+regex = "1"
+
+# --- 配置 ---
+envy = "0.4"
+dotenvy = "0.15"
+
+# --- 日志 ---
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# --- Provider trait 对象化需要 async fn in trait 的对象安全版本 ---
+async-trait = "0.1"
+
+[dev-dependencies]
+wiremock = "0.6"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+# 关键：不要设 panic = "abort"。
+# 铁律要求「任何失败绝不进程退出」，abort 会让任一 panic 直接杀进程。
+
+# ---- 质量门禁 ----
+# 说明：这里用 warn 而非 deny，原因是 rmcp 的 proc-macro（#[tool_router] 等）
+# 会生成本 crate 内的代码，若其生成块里自带 unwrap，deny 会让构建直接失败。
+# 真正的验收门禁仍是 `cargo clippy -- -D warnings`：
+#   - 手写代码出现 unwrap/expect/panic → clippy 报 warning → 门禁失败；
+#   - 若命中点确实在宏生成块内，只允许在对应 impl 上局部 #[allow(clippy::unwrap_used)] 并注明原因。
+[lints.clippy]
+unwrap_used = "warn"
+expect_used = "warn"
+panic = "warn"
+todo = "warn"
+unimplemented = "warn"
