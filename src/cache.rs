@@ -34,7 +34,12 @@ impl TtlCache {
         self.inner.insert(key.to_string(), value).await;
     }
 
-    pub fn entry_count(&self) -> u64 {
+    /// 当前条目数。
+    ///
+    /// 注意：moka 的 `entry_count()` 不含尚未被维护任务处理的插入，
+    /// 直接取会看到 0。先跑一次 `run_pending_tasks` 才是真实值。
+    pub async fn count(&self) -> u64 {
+        self.inner.run_pending_tasks().await;
         self.inner.entry_count()
     }
 }

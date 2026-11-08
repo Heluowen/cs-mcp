@@ -34,7 +34,8 @@ struct ServerInner {
     cfg: Config,
     tz: FixedOffset,
     agg: Aggregator,
-    cache: CacheSet,
+    /// 与聚合器共享同一个缓存实例，`cs_ping` 才能读到真实条目数。
+    cache: Arc<CacheSet>,
 }
 
 /// MCP 服务句柄。`Clone` 是 rmcp 宏的要求。
@@ -46,7 +47,12 @@ pub struct CsServer {
 impl CsServer {
     pub fn new(cfg: Config) -> anyhow::Result<Self> {
         let tz = Config::cn_offset()?;
-        let cache = CacheSet::new(cfg.ttl_schedule(), cfg.ttl_live(), cfg.ttl_rank());
+        // 缓存放在聚合层：对上层是 source 无关的，命中时不会打上游。
+        let caches = Arc::new(CacheSet::new(
+            cfg.ttl_schedule(),
+            cfg.ttl_live(),
+            cfg.ttl_rank(),
+        ));
 
         let mut providers: Vec<Box<dyn Provider>> = Vec::new();
 
@@ -69,8 +75,8 @@ impl CsServer {
             inner: Arc::new(ServerInner {
                 cfg,
                 tz,
-                agg: Aggregator::new(providers),
-                cache,
+                agg: Aggregator::new(providers, Arc::clone(&caches)),
+                cache: caches,
             }),
         })
     }
@@ -120,8 +126,9 @@ fn finish_matches(
 ) -> Result<CallToolResult, McpError> {
     match result {
         Ok(r) => {
+            let cached = r.cached;
             let meta = Meta::new(r.items.len(), r.sources_used, r.degraded)
-                .with_timing(false, started.elapsed().as_millis() as u64);
+                .with_timing(cached, started.elapsed().as_millis() as u64);
             ok_body(r.items, meta)
         }
         Err(e) => err_body(e),
@@ -134,8 +141,9 @@ fn finish_rankings(
 ) -> Result<CallToolResult, McpError> {
     match result {
         Ok(r) => {
+            let cached = r.cached;
             let meta = Meta::new(r.items.len(), r.sources_used, r.degraded)
-                .with_timing(false, started.elapsed().as_millis() as u64);
+                .with_timing(cached, started.elapsed().as_millis() as u64);
             ok_body(r.items, meta)
         }
         Err(e) => err_body(e),
@@ -238,9 +246,9 @@ impl CsServer {
                 "hltv_scrape_enabled": self.inner.cfg.enable_hltv_scrape,
                 "providers": providers,
                 "cache_entries": {
-                    "schedule": self.inner.cache.schedule.entry_count(),
-                    "live": self.inner.cache.live.entry_count(),
-                    "rank": self.inner.cache.rank.entry_count(),
+                    "schedule": self.inner.cache.schedule.count().await,
+                    "live": self.inner.cache.live.count().await,
+                    "rank": self.inner.cache.rank.count().await,
                 }
             }],
             "meta": Meta::new(1, vec![], false),

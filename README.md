@@ -16,7 +16,7 @@ cs-mcp  →  PandaScore（主）→ Liquipedia（辅）→ 5EPlay（可选）  �
 |---|---|---|
 | S1 | 工程骨架、8 个 tool 全量注册、stdio 打通、`cs_ping` 可用 | ✅ **已完成并验证**（见 §7.1） |
 | S2 | PandaScore 真实接入（6 个数据 tool 已打通） | ✅ **已完成**（2 项受数据源限制，见 §9） |
-| S3 | 降级 / 缓存 / 限流 / 错误码全链路 | ⏳ 待做（代码已就绪，待接入聚合链） |
+| S3 | 降级 / 缓存 / 限流 / 错误码全链路 | ✅ **已完成**（缓存命中实测 20575 ms → 106 ms，见 §7.7） |
 | S4 | Liquipedia + `cs_world_ranking` | ⏳ 待做 |
 | S5–S7 | HTTP transport、联调、硬化验收 | ⏳ 待做 |
 
@@ -257,6 +257,21 @@ HTTP 方式则改为：
 | `StreamableHttpService::new(...)` 的 factory 返回类型推断 | 显式标注 `move \|\| -> Result<CsServer, std::io::Error> { Ok(h.clone()) }` |
 | clippy 在宏生成块里报 `unwrap_used` | 在该 impl 上局部 `#[allow(clippy::unwrap_used)]` 并写明原因 |
 
+### 7.7 S3 验证记录（缓存 / 限流）
+
+| 项 | 结果 |
+|---|---|
+| **同参数重复调用命中缓存** | ✅ 冷调用 **20575 ms** → 热调用 **106 ms**（`cached=true`、`elapsed_ms=0`、未打上游，快 194×） |
+| 命中后不再调用 Provider | ✅ 单测 `identical_query_hits_cache_and_skips_provider`（Provider 调用计数 = 1） |
+| 不同参数不共享缓存 | ✅ 单测 `different_args_do_not_share_cache`（计数 = 2） |
+| 失败结果不入缓存 | ✅ 单测 `failure_is_not_cached_so_retry_reaches_provider`（计数 = 2）——否则一次抖动会被缓存 120 秒 |
+| 缓存条目数可观测 | ✅ `cs_ping.cache_entries` 改为先跑 `run_pending_tasks` 再取（moka 直接 `entry_count()` 会看到 0） |
+| 缓存内容完整往返 | ✅ 缓存存的是整个 `AggregateResult`（含 `sources_used` / `degraded`），不是只有 `items` |
+| 限流 | ✅ PandaScore 软限流：1 QPS / burst 3，拿不到令牌最多等 2 秒后放行 |
+| 质量门禁 | ✅ `cargo build` / `clippy -- -D warnings` / **26 个测试** 全绿 |
+
+> 缓存 TTL 分三档：实时 30s（`CACHE_TTL_LIVE`）、赛程/赛果 120s（`CACHE_TTL_SCHEDULE`）、排名 3600s（`CACHE_TTL_RANK`）。
+
 ---
 
 ## 8. 数据源与实测结论（2026-10 实测）
@@ -299,7 +314,7 @@ HTTP 方式则改为：
 4. **`cs_world_ranking` 未实现**：排名只能走 Liquipedia（需规范 UA + ≤1 req/2s），属 S4。届时 `Ranking.stale=true`，可能滞后 1–7 天。
 5. **中文队名覆盖有限**：`name_zh` 来自内置静态别名表（约 50 个常见队），未收录输出 `null`，**不做机器翻译**。新增队伍请改 `src/aliases.rs`。
 6. **HLTV 不可用**：403 + `cf-mitigated: challenge`，且 ToS 2.2 禁止爬取 → 默认关闭（`ENABLE_HLTV_SCRAPE=0`）。需要 HLTV 原始数据只能走 TLS 指纹伪装 sidecar 或代理，不在本 crate 范围。
-7. **缓存与限流尚未接入聚合链**：`moka` / `governor` 代码已就绪且有单元测试，但 S2 阶段每次 tool 调用仍会真实打上游，属 S3。
+7. **限流是「软限流」**：PandaScore 令牌桶（1 QPS / burst 3）拿不到令牌时最多等待 2 秒后**放行**，而不是硬拒绝——宁可慢一点也不让用户请求无故失败；缓存已在绝大多数情况下避免重复打上游。Liquipedia 的 0.5 QPS 限流随 S4 接入。
 8. **分页截断**：`per_page` 从 100 降为 50（适配慢网络），超长时间窗口（如 168 小时）的赛果可能被截断为最新 50 场。
 9. **`TZ` 等空值环境变量**已由 `Config::normalize()` 兜底，不会再产生空时区；但**新增配置项时请同步扩充 `normalize()`**。
 10. **HTTP 响应的 `Content-Type` 不带 `charset=utf-8`**：字节是正确的 UTF-8，标准 MCP 客户端无碍；若遇中文乱码的客户端，在 S5 加一层 tower 中间件改写为 `text/event-stream; charset=utf-8`。

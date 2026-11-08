@@ -134,6 +134,8 @@ pub struct PandaScoreProvider {
     token: Option<String>,
     /// 展示时区，恒为 +08:00。
     tz: FixedOffset,
+    /// 按 host 限流：PandaScore 免费档约 1 QPS。
+    limiter: Option<crate::ratelimit::HostLimiter>,
 }
 
 // ------------------------------------------------------------------ impl
@@ -162,7 +164,29 @@ impl PandaScoreProvider {
             client,
             token: Some(token),
             tz,
+            // 1 QPS、允许 3 次突发（一次 tool 调用可能连打 2–3 个端点）。
+            limiter: crate::ratelimit::HostLimiter::per_second(1, 3),
         })
+    }
+
+    /// 软限流：拿不到令牌时最多等待 2 秒（4 × 500ms）后再放行。
+    ///
+    /// 硬拒绝会让用户请求无谓失败，而缓存已经在绝大多数情况下避免重复打上游；
+    /// 这里的目标是「限制突发」而不是「限死」。
+    async fn throttle(&self) {
+        let Some(limiter) = self.limiter.as_ref() else {
+            return;
+        };
+        if limiter.try_acquire() {
+            return;
+        }
+        for _ in 0..4 {
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            if limiter.try_acquire() {
+                return;
+            }
+        }
+        tracing::debug!("PandaScore 限流令牌等待超时，放行本次请求");
     }
 
     fn token(&self) -> Result<&str, ProviderError> {
@@ -220,6 +244,7 @@ impl PandaScoreProvider {
     }
 
     async fn fetch_list_once(&self, path: &str) -> Result<Vec<PsMatch>, ProviderError> {
+        self.throttle().await;
         let url = format!("{BASE_URL}{path}");
         let resp = self
             .client
@@ -239,6 +264,7 @@ impl PandaScoreProvider {
 
     /// 单场端点返回的是**对象**而非数组。
     async fn fetch_single(&self, path: &str) -> Result<Option<PsMatch>, ProviderError> {
+        self.throttle().await;
         let url = format!("{BASE_URL}{path}");
         let resp = self
             .client
@@ -249,7 +275,11 @@ impl PandaScoreProvider {
             .await
             .map_err(|e| ProviderError::Upstream(format!("请求 {path} 失败: {e}")))?;
 
-        if resp.status() == reqwest::StatusCode::NOT_FOUND {
+        // 403 在此端点通常表示「该比赛不在当前数据范围内」（与 token 无关），
+        // 按「查不到」处理，避免误报 AUTH_ERROR。
+        if resp.status() == reqwest::StatusCode::NOT_FOUND
+            || resp.status() == reqwest::StatusCode::FORBIDDEN
+        {
             return Ok(None);
         }
         Self::check_status(resp.status(), path)?;
@@ -367,6 +397,7 @@ impl PandaScoreProvider {
         let canonical = crate::aliases::canonical_name(input).unwrap_or(input).to_string();
         let path = format!("/csgo/teams?search[name]={}&per_page=5", urlencode(&canonical));
 
+        self.throttle().await;
         let url = format!("{BASE_URL}{path}");
         let resp = self
             .client
