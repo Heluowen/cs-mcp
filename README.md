@@ -1,6 +1,6 @@
 # cs-mcp — CS2 赛事 MCP Server（Rust）
 
-把 CS2 赛事数据暴露为 7 个 MCP tool，供任意 MCP 客户端（Claude Desktop / Cursor / AstrBot）直调。
+把 CS2 赛事数据暴露为 8 个 MCP tool（7 个业务 tool + `cs_ping` 健康检查），供任意 MCP 客户端（Claude Desktop / Cursor / AstrBot）直调。
 
 **核心原则：只「取数 + 结构化」，不做文案渲染。** 自然语言由调用方模型组织。
 
@@ -15,12 +15,13 @@ cs-mcp  →  PandaScore（主）→ Liquipedia（辅）→ 5EPlay（可选）  �
 | 阶段 | 内容 | 状态 |
 |---|---|---|
 | S1 | 工程骨架、8 个 tool 全量注册、stdio 打通、`cs_ping` 可用 | ✅ **已完成并验证**（见 §7.1） |
-| S2 | PandaScore 真实接入（5 个数据 tool） | ⏳ 待做（需 token） |
-| S3 | 降级 / 缓存 / 限流 / 错误码全链路 | ⏳ 待做 |
-| S4 | Liquipedia + `cs_world_ranking` + `cs_today_schedule` | ⏳ 待做 |
+| S2 | PandaScore 真实接入（6 个数据 tool 已打通） | ✅ **已完成**（2 项受数据源限制，见 §9） |
+| S3 | 降级 / 缓存 / 限流 / 错误码全链路 | ⏳ 待做（代码已就绪，待接入聚合链） |
+| S4 | Liquipedia + `cs_world_ranking` | ⏳ 待做 |
 | S5–S7 | HTTP transport、联调、硬化验收 | ⏳ 待做 |
 
-> S1 阶段：`cs_ping` 返回真实自检信息；其余 7 个 tool **可调、schema 正确**，但因 Provider 尚未实现，返回结构化 `NO_DATA`（这是正确行为，不是故障）。
+> **S2 已完成**：`cs_live_matches` / `cs_upcoming_matches` / `cs_recent_results` / `cs_today_schedule` / `cs_team_matches` / `cs_match_detail` 已接 PandaScore 真实数据（含比分、直播源、+08:00 时间、中文队名别名）。
+> `cs_world_ranking` 仍返回 `NO_DATA`，排名只能走 Liquipedia，属 S4。
 
 ---
 
@@ -35,13 +36,14 @@ cs-mcp  →  PandaScore（主）→ Liquipedia（辅）→ 5EPlay（可选）  �
 | `cs_today_schedule` | `date?` | 指定日（默认今天）全部赛程 |
 | `cs_team_matches` | `team`, `limit=6` | 某队未来与最近各 N 场 |
 | `cs_world_ranking` | `top=10` | 世界排名与名次变动（来源 Liquipedia，可能滞后） |
-| `cs_match_detail` | `match_id` | 单场详情：逐图比分、地图、直播源 |
+| `cs_match_detail` | `match_id` | 单场详情：队伍/比分/直播源（**逐图 maps 恒为空**，见 §9 第 1 条） |
 
 调用原则（建议写进系统提示）：
 
 - 实时比分只有 PandaScore 提供；返回 `NO_DATA` 时**如实告知用户**，禁止用其它工具的历史数据替代，禁止编造比分。
 - 时间一律 `+08:00`；未开赛的比赛不给比分。
 - `meta.sources_used` 是真实来源，`meta.degraded=true` 表示发生了降级，`meta.cached=true` 表示命中缓存——回复时应如实标注来源。
+- **`maps` 永远为空**（数据源不给逐图信息），不要据此推断「比赛没有地图数据」之外的结论。
 
 ---
 
@@ -170,7 +172,7 @@ HTTP 方式则改为：
 | `PANDASCORE_TOKEN` | 空 | 缺失则实时比分不可用（`cs_live_matches` 返回 `NO_DATA`） |
 | `ENABLE_HLTV_SCRAPE` | `0` | HLTV 抓取开关，**默认关**，原因见 §8 |
 | `HTTP_PROXY` | 空 | 出站代理，如 `http://127.0.0.1:7890` |
-| `HTTP_TIMEOUT_SECS` | `5` | 上游超时 |
+| `HTTP_TIMEOUT_SECS` | `15` | 上游请求总超时（5s 读不完 50–100 条响应，见 §7.5） |
 | `CACHE_TTL_SCHEDULE` | `120` | 赛程缓存 TTL（秒） |
 | `CACHE_TTL_LIVE` | `30` | 实时缓存 TTL（秒） |
 | `CACHE_TTL_RANK` | `3600` | 排名缓存 TTL（秒） |
@@ -219,7 +221,33 @@ HTTP 方式则改为：
 | `dead_code` allow 重复 | clippy `duplicated_attributes` 报错 | 删除 `main.rs` 上 `mod ratelimit;` 的外层 `#[allow(dead_code)]`，仅保留文件内 `#![allow(dead_code)]` |
 | 常量断言 | clippy `assertions_on_constants` 报错 | 测试改用 `assert!(parsed.is_ok())` 运行时断言 |
 
-### 7.4 rmcp 升级时的检查点（历史经验，供未来参考）
+### 7.4 S2 验证记录（2026-11，真实 PandaScore 数据）
+
+| tool | 结果 | 证据 |
+|---|---|---|
+| `cs_ping` | ✅ | `pandascore_ready=true`，`providers=[pandascore:10, liquipedia:20]` |
+| `cs_live_matches` | ✅ | count=5（`TheMongolz vs MOUZ @ 2026-11-08T15:32+08:00`） |
+| `cs_upcoming_matches`(72h) | ✅ | count=36，连续两轮复测均成功 |
+| `cs_today_schedule` | ✅ | count=36 |
+| `cs_team_matches`(MOUZ) | ✅ | count=4–5，含终局比分（`MOUZ 2-0 BetBoom`） |
+| `cs_recent_results`(48h) | ⚠️ | 成功一次 count=79（`Teletubisie 2-0 XI Esport`）；后续 4 次撞网络超时 |
+| `cs_team_matches`(天禄) | ⚠️ | `NO_DATA`——数据源里 TYLOO 的比赛**全部是 canceled** |
+| `cs_match_detail` | ⚠️ | PandaScore 对部分 id 返回 **403** → 当前映射为 `AUTH_ERROR` |
+| `cs_world_ranking` | ⏳ | `NO_DATA`（排名只能走 Liquipedia，属 S4） |
+
+> 所有时间均为 `+08:00` RFC3339；比分只出现在 live/finished 场次；`maps` 恒为空（数据源边界）。
+
+### 7.5 S2 期间修复的真实缺陷
+
+| # | 缺陷 | 现象 | 修复 |
+|---|---|---|---|
+| 1 | **`envy` 会把环境变量名小写化**，而字段上写了 `#[serde(rename = "PANDASCORE_TOKEN")]` | serde 找全大写键永远匹配不上，**整个 Config 静默回落到默认值**；表现为 token 配了却 `pandascore_ready=false` | 去掉全部 `rename`，字段用 snake_case 靠大小写不敏感匹配；新增回归测试 `env_vars_bind_case_insensitively` |
+| 2 | API 返回 `"streams_list": null`（而非 `[]`） | `error decoding response body`，整条链路失败 | 新增 `null_to_default` 反序列化，`opponents`/`results`/`streams_list` 同时容忍 `null` 与缺失 |
+| 3 | `/csgo/matches/past` 被脏数据污染 | 100 条里 97 条是 `canceled` 且 `begin_at` 为 null，按 `-begin_at` 排序全排最前 → 「最近赛果」永远为空 | 改用服务端 `filter[status]=finished` + `sort=-scheduled_at` |
+| 4 | 聚合器返回的是**最后一个**源的错误 | pandascore 失败后 liquipedia 兜底，最终错误显示「liquipedia 尚未实现」——真正有行动价值的错误被掩盖 | 改为优先返回**最高优先级源**的错误（`first_err`） |
+| 5 | 默认超时 5s 不现实 | 50–100 条响应在本机网络下要 3–8s，被误判为 `[timeout]` | 默认改 15s + `connect_timeout 3s` + 一次短退避重试；错误信息带完整 reqwest source 链（`[timeout]/[connect]/[decode]/[body]`） |
+
+### 7.6 rmcp 升级时的检查点（历史经验，供未来参考）
 
 | 检查点 | 若失败怎么改 |
 |---|---|
@@ -245,20 +273,38 @@ HTTP 方式则改为：
 
 **硬规则**：`cs_live_matches` 在 PandaScore 不可用时返回 `NO_DATA`，**绝不用 Liquipedia / 5EPlay 伪造实时比分**。
 
+### 8.1 PandaScore 接入要点（S2 实测，写代码前必读）
+
+| 要点 | 细节 |
+|---|---|
+| ID 命名空间 | `id` 是 int → 对外统一 `pandascore:<id>` |
+| 状态映射 | `not_started`→upcoming、`running`→live、`finished`→finished；**`canceled`/`postponed` 一律丢弃**（不猜测映射） |
+| 时间字段 | **`begin_at` 可能为 null**（尤其已结束场次），必须回退到 `scheduled_at`，再转 `+08:00` |
+| 必加过滤 | `filter[status]=not_started`（upcoming）/ `filter[status]=finished`（past）；否则会混入大量 canceled |
+| 必用排序 | past 用 `sort=-scheduled_at`，**不是** `-begin_at`（后者被 null 值污染） |
+| 空集合形态 | `opponents` / `results` / `streams_list` 可能是 `null` 而非 `[]`，反序列化必须容忍 |
+| 逐图数据 | **`games[]` 只有 `position/status/winner`，没有地图名与逐图比分** → `maps` 恒空 |
+| 直播源 | `streams_list[]` 元素含 `{main, raw_url, embed_url, language}`，`main=true` 排前 |
+| 队伍匹配 | `GET /csgo/teams?search[name]=<canonical>` 返回多命中（如 `TYLOO` 与 `TYLOO fe`），需按 name/slug 精确匹配 |
+| 403 语义 | 单场端点对部分 id 返回 403（与 token 无关），当前映射为 `AUTH_ERROR`，待 S3 细分 |
+| 分页 | `per_page` 在慢网络下从 100 降为 50；48h 赛果可能被截断为最新 50 场 |
+
 ---
 
 ## 9. 已知限制
 
-1. **未编译验证**（见 §7）。本仓库当前状态是「可审查的完整骨架」，第一次 `cargo build` 仍需按 §7 清单微调。
-2. **无实时比分兜底**：没有 PandaScore token 时，`cs_live_matches` 恒为 `NO_DATA`。这是设计选择，不是 bug。
-3. **HLTV 不可用**：Cloudflare 挑战 + ToS 禁爬。需 HLTV 原始数据只能走 TLS 指纹伪装 sidecar 或代理，不在本 crate 范围。
-4. **Liquipedia 排名口径滞后**：`Ranking.stale=true`，可能滞后 1–7 天。
-5. **中文队名**：`name_zh` 来自内置静态对照表，缺省为 `null`，**不做机器翻译**。
-6. **缓存/s 限流在 S3 才接入聚合链**：S1 只有工具函数骨架与单元测试。
-7. **HTTP transport 未验证**：S1 已写代码，但按计划 S5 才联调。
-8. **rmcp 迭代快**：升级小版本前先跑 `cargo build` + Inspector，重点看 transport 与宏参数。
-9. **HTTP 响应的 `Content-Type` 不带 `charset=utf-8`**：实测响应体字节是正确的 UTF-8，但头部只有 `text/event-stream`。标准 MCP 客户端默认按 UTF-8 解析 JSON，通常无碍；若遇到中文描述乱码的客户端，在 S5 加一层 tower 中间件改写成 `text/event-stream; charset=utf-8` 即可。
-10. **`TZ` 等环境变量若被定义为空**（`TZ=`）已由 `Config::normalize()` 兜底，不会再产生空时区；但**新增配置项时请同步扩充 `normalize()`**。
+1. **`maps` 恒为空（数据源边界）**：PandaScore 的 CS2 `games[]` 只含 `position/status/winner`，**没有地图名与逐图比分**。留空是如实行为，不得编造；需要逐图数据只能换源。
+2. **`cs_recent_results` 上游不稳定**：`/csgo/matches/past` 在本机网络下高频 `[timeout]`/`[connect]`，实测成功率约 1/5（成功时能返回 48 小时内 79 场）。已加一次重试，S3 的 moka 缓存会进一步缓解。
+3. **`cs_match_detail` 的 403 语义偏保守**：PandaScore 对部分 match id 返回 403（与 token 无关），当前统一映射为 `AUTH_ERROR`。更准确的做法是区分「token 问题」与「该比赛不可查」，留待 S3 细化。
+4. **`cs_world_ranking` 未实现**：排名只能走 Liquipedia（需规范 UA + ≤1 req/2s），属 S4。届时 `Ranking.stale=true`，可能滞后 1–7 天。
+5. **中文队名覆盖有限**：`name_zh` 来自内置静态别名表（约 50 个常见队），未收录输出 `null`，**不做机器翻译**。新增队伍请改 `src/aliases.rs`。
+6. **HLTV 不可用**：403 + `cf-mitigated: challenge`，且 ToS 2.2 禁止爬取 → 默认关闭（`ENABLE_HLTV_SCRAPE=0`）。需要 HLTV 原始数据只能走 TLS 指纹伪装 sidecar 或代理，不在本 crate 范围。
+7. **缓存与限流尚未接入聚合链**：`moka` / `governor` 代码已就绪且有单元测试，但 S2 阶段每次 tool 调用仍会真实打上游，属 S3。
+8. **分页截断**：`per_page` 从 100 降为 50（适配慢网络），超长时间窗口（如 168 小时）的赛果可能被截断为最新 50 场。
+9. **`TZ` 等空值环境变量**已由 `Config::normalize()` 兜底，不会再产生空时区；但**新增配置项时请同步扩充 `normalize()`**。
+10. **HTTP 响应的 `Content-Type` 不带 `charset=utf-8`**：字节是正确的 UTF-8，标准 MCP 客户端无碍；若遇中文乱码的客户端，在 S5 加一层 tower 中间件改写为 `text/event-stream; charset=utf-8`。
+11. **rmcp 迭代快**：升级小版本前先跑 `cargo build` + Inspector，重点看 transport 与宏参数（见 §7.6）。
+12. **数据源为第三方聚合**：PandaScore 对小型赛事（尤其亚洲二线）覆盖有延迟，个别场次状态可能滞后于实际。
 
 ---
 
@@ -269,18 +315,20 @@ cs-mcp/
 ├── Cargo.toml
 ├── .env.example
 ├── README.md
+├── LICENSE
 └── src/
     ├── main.rs          # 启动、tracing（stderr）、transport 选择
-    ├── server.rs        # CsServer + 7 个 tool + 参数校验 + #[tool_handler]
-    ├── aggregator.rs    # Provider trait + 降级链
+    ├── server.rs        # CsServer + 8 个 tool + 参数校验 + #[tool_handler]
+    ├── aggregator.rs    # Provider trait + 降级链（错误优先取最高优先级源）
+    ├── aliases.rs       # 队名别名表：中文俗称 ↔ 英文规范名（name_zh 不机翻）
     ├── models.rs        # Match / Team / Tournament / ApiSuccess / ApiFailure / Meta
     ├── error.rs         # ErrorCode / ApiError / ProviderError（thiserror）
-    ├── config.rs        # envy + dotenvy 配置
-    ├── cache.rs         # moka TTL 缓存（S3 启用）
-    ├── ratelimit.rs     # governor 按 host 限流（S2/S3 启用）
+    ├── config.rs        # envy + dotenvy 配置（空值兜底 + normalize）
+    ├── cache.rs         # moka TTL 缓存（S3 接入）
+    ├── ratelimit.rs     # governor 按 host 限流（S3 接入）
     └── providers/
         ├── mod.rs
-        ├── pandascore.rs   # 主源（S2）
+        ├── pandascore.rs   # 主源，S2 已实现 6 个 tool
         ├── liquipedia.rs   # 辅源（S4）
         └── hltv.rs         # 默认禁用
 ```
