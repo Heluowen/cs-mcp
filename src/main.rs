@@ -4,6 +4,7 @@
 //! 否则会污染 JSON-RPC 流导致客户端立即断开。
 
 mod aggregator;
+mod aliases;
 mod cache;
 mod config;
 mod error;

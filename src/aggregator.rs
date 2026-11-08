@@ -87,10 +87,16 @@ pub struct AggregateResult<T> {
 }
 
 /// 依次尝试所有 Provider 的辅助宏。
+///
+/// 错误选择策略：全部失败时优先返回**最高优先级源**的错误（`first_err`），
+/// 而不是最后一个源的错误。踩过的坑：pandascore 失败后由 liquipedia 兜底，
+/// 而 liquipedia 尚未实现，最终错误变成「liquipedia 尚未实现 team_matches」，
+/// 完全掩盖了真正有行动价值的 pandascore 错误。
 macro_rules! try_providers {
     ($self:expr, $method:ident $(, $arg:expr)* $(,)?) => {{
         let mut sources_used: Vec<String> = Vec::new();
         let mut degraded = false;
+        let mut first_err: Option<ApiError> = None;
         let mut last_err: Option<ApiError> = None;
 
         for provider in $self.providers.iter() {
@@ -105,19 +111,24 @@ macro_rules! try_providers {
                 }
                 Ok(_) => {
                     degraded = true;
-                    last_err = Some(ApiError::no_data(format!(
-                        "{} 返回空结果",
-                        provider.name()
-                    )));
+                    let e = ApiError::no_data(format!("{} 返回空结果", provider.name()));
+                    if first_err.is_none() {
+                        first_err = Some(e.clone());
+                    }
+                    last_err = Some(e);
                 }
                 Err(err) => {
                     degraded = true;
-                    last_err = Some(err.to_api_error());
+                    let e = err.to_api_error();
+                    if first_err.is_none() {
+                        first_err = Some(e.clone());
+                    }
+                    last_err = Some(e);
                 }
             }
         }
 
-        Err(last_err.unwrap_or_else(|| {
+        Err(first_err.or(last_err).unwrap_or_else(|| {
             ApiError::new(ErrorCode::NoData, "没有可用的数据源")
         }))
     }};
