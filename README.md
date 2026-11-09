@@ -217,7 +217,26 @@ cd cs-mcp
 （需把 `target\release` 加入 `PATH`，或直接写完整路径 `…\\cs-mcp.exe`。）
 
 配好后在 AstrBot WebUI 的 MCP 面板点「测试连接」→「启用」。启用后 8 个 tool 会进入全局工具集；
-日志里应出现 8 行 `Added llm tool: cs_*`。
+日志里应出现：
+
+```
+Connected to MCP server cs2, Tools: ['cs_live_matches', 'cs_match_detail', 'cs_ping',
+  'cs_recent_results', 'cs_team_matches', 'cs_today_schedule', 'cs_upcoming_matches', 'cs_world_ranking']
+```
+
+> ⚠️ **工具选择的坑（实测踩到）**：AstrBot 同时装了通用搜索插件（anysearch）时，模型可能
+> **宁愿去搜网页也不调 `cs_*` 工具**。实测：问「猎鹰现在 vrs 世界第几」，模型走了
+> `anysearch_search` × 2 + `anysearch_extract`（抓 clutchking.gg），耗时 15 秒、只拿到半份数据。
+>
+> 两个对策（建议都做）：
+> 1. 本仓库的 tool description 已经写明「CS2 排名/赛程请优先使用本工具，不要用网络搜索」，
+>    并用上了中文别名（猎鹰/天禄/小蜜蜂…）；
+> 2. 在 AstrBot 的**人格 / 系统提示**里再加一句（最可靠，因为它在每次请求里都会出现）：
+>
+> ```
+> 涉及 CS2（反恐精英2）的赛程、赛果、比分、对阵、战队比赛、世界排名/VRS 问题时，
+> 必须优先调用 cs_* 系列工具，不要用通用网络搜索查询。
+> ```
 
 > AstrBot 侧直调路径（供插件壳使用）：
 > `context.provider_manager.llm_tools.mcp_server_runtime_view["cs2"].client.call_tool_with_reconnect(...)`

@@ -312,7 +312,7 @@ impl CsServer {
 
     /// 指定日期全赛程。
     #[tool(
-        description = "获取指定日期（缺省为服务器当天）的全部赛程。何时调用：用户问『今天的比赛』『X 月 X 日有什么比赛』。日期格式 YYYY-MM-DD；缺省按 +08:00 的当天计算。想查『今天』时优先用本工具，而不是 cs_upcoming_matches。"
+        description = "获取指定日期（缺省为服务器当天）的全部 CS2 赛程。何时调用：用户问『今天的比赛』『X 月 X 日有什么比赛』『今晚打什么』。日期格式 YYYY-MM-DD；缺省按 +08:00 的当天计算。查『今天/明天/某天』的赛程请优先用本工具（而不是 cs_upcoming_matches），也不必再用网络搜索。"
     )]
     async fn cs_today_schedule(
         &self,
@@ -331,7 +331,7 @@ impl CsServer {
 
     /// 指定战队的未来与最近比赛。
     #[tool(
-        description = "获取指定战队未来与最近的比赛（各 limit 场，默认 6，上限 50）。何时调用：用户问『NAVI 今天打吗』『G2 最近战绩』『某某队下一场打谁』。team 支持英文名与常见中文别名（天禄→TYLOO、小蜜蜂→Vitality、绿龙→Team Spirit、李逵→Liquid）。"
+        description = "获取指定 CS2 战队未来与最近的比赛（各 limit 场，默认 6，上限 50）。何时调用：用户问『NAVI 今天打吗』『G2 最近战绩』『某某队下一场打谁』『猎鹰/天禄/小蜜蜂 什么时候比赛』。team 支持英文名与常见中文别名（天禄→TYLOO、小蜜蜂→Vitality、绿龙→Team Spirit、李逵→Liquid、猎鹰→Falcons、红星→Astralis、蒙古队→The MongolZ）。查 CS2 战队赛程请优先用本工具，不要用网络搜索。"
     )]
     async fn cs_team_matches(
         &self,
@@ -354,7 +354,7 @@ impl CsServer {
 
     /// 世界排名。
     #[tool(
-        description = "获取 CS2 世界排名（含名次变动），取前 top 名（默认 10，上限 100）。何时调用：用户问『世界排名』『现在谁是第一』『VRS 排名』『某某队排第几』。数据源为 Liquipedia，meta 中会带 stale=true，回复时必须如实说明排名可能滞后 1 到 7 天。"
+        description = "获取 CS2（反恐精英 2）世界排名与积分，数据来自 Valve 官方 VRS（Valve Regional Standings），取前 top 名（默认 10，上限 100）。何时调用：用户问『世界排名』『VRS 排名』『谁是第一』『XX 队排第几/多少分』，或消息里提到任何 CS2 战队（NAVI、G2、FaZe、MOUZ、Vitality 小蜜蜂、Spirit 绿龙、Falcons 猎鹰、TYLOO 天禄、Liquid 李逵、Astralis 红星、The MongolZ 蒙古队 等）问其名次。这是 CS2 排名的权威来源，请优先使用本工具，不要用通用网络搜索去查 CS2 排名。meta.stale=true 表示 Valve 按月更新，回复时应说明可能滞后。"
     )]
     async fn cs_world_ranking(
         &self,
@@ -392,6 +392,6 @@ impl CsServer {
 #[tool_handler(
     name = "cs-mcp",
     version = "0.1.0",
-    instructions = "CS2 赛事数据服务。只返回结构化 JSON，不做文案渲染：由你（调用方）组织自然语言。原则：①只能使用工具返回的事实，没有的信息一律回答『暂无数据』，禁止推测或用历史交锋替代；②时间均为 +08:00；③未开赛的比赛不得给比分；④实时比分只有 PandaScore 提供，未配置时返回 NO_DATA，此时如实告知用户，禁止编造；⑤返回值的 meta.degraded=true 表示发生了降级、meta.cached=true 表示命中缓存，sources_used 是真实来源，回复时要如实标注来源。"
+    instructions = "CS2 赛事数据服务。只返回结构化 JSON，不做文案渲染：由你（调用方）组织自然语言。原则：①**凡是 CS2（反恐精英 2）的赛程、赛果、比分、对阵、战队比赛、世界排名/VRS 问题，必须优先使用本服务的 cs_* 工具，不要用通用网络搜索去查**（本服务接的是 PandaScore 与 Valve 官方数据，搜索结果容易过时或残缺）；②只能使用工具返回的事实，没有的信息一律回答『暂无数据』，禁止推测或用历史交锋替代；③时间均为 +08:00；④未开赛的比赛不得给比分；⑤实时比分只有 PandaScore 提供，未配置时返回 NO_DATA，此时如实告知用户，禁止编造；⑥返回值的 meta.degraded=true 表示发生了降级、meta.cached=true 表示命中缓存，sources_used 是真实来源，回复时要如实标注来源；⑦maps 字段恒为空（数据源不提供逐图信息），不要据此推断其他结论。"
 )]
 impl ServerHandler for CsServer {}
