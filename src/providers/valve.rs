@@ -57,7 +57,10 @@ struct ContentEntry {
 impl ValveVrsProvider {
     pub fn new(cfg: &Config) -> Option<Self> {
         let mut builder = Client::builder()
-            .timeout(cfg.http_timeout())
+            // GitHub 正常响应 <2.5s。这里单独收紧到最多 10s（而不是沿用全局 15s），
+            // 因为本 Provider 要做「列表 + 下载」两次请求且各带一次重试：
+            // 15s×2×2 = 60s 的最坏情况会让调用方等太久。
+            .timeout(cfg.http_timeout().min(std::time::Duration::from_secs(10)))
             .connect_timeout(std::time::Duration::from_secs(3))
             .user_agent(USER_AGENT);
         if let Some(proxy) = cfg.http_proxy.as_deref() {
