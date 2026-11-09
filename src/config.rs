@@ -39,6 +39,25 @@ fn default_global_qps() -> u32 {
     2
 }
 
+/// 判断一个值是否像合法的代理地址。
+///
+/// 允许 `scheme://host:port` 与 `host:port` 两种写法；
+/// 明确拒绝空值、`[]`、`none`、`null` 这类「不是代理」的填充值。
+fn is_valid_proxy(value: &str) -> bool {
+    let v = value.trim();
+    if v.is_empty() {
+        return false;
+    }
+    if v.contains('[') || v.contains(']') {
+        return false;
+    }
+    if v.eq_ignore_ascii_case("none") || v.eq_ignore_ascii_case("null") {
+        return false;
+    }
+    // 必须能看出 host:port（或带 scheme 的 URL 里含冒号）
+    v.contains(':') && v.len() > 3
+}
+
 /// 运行期配置。
 ///
 /// 所有字段都有默认值，因此缺少环境变量不会导致启动失败。
@@ -113,7 +132,34 @@ impl Config {
         let mut cfg: Self = envy::from_iter(vars).context("读取环境变量配置失败")?;
 
         cfg.normalize();
+        Self::strip_proxy_env();
         Ok(cfg)
+    }
+
+    /// 清掉环境里的代理变量，让出站代理行为**完全由 `cfg.http_proxy` 决定**。
+    ///
+    /// 踩过的坑（最隐蔽的一个）：
+    /// - AstrBot 的 `core_lifecycle.py` 会执行 `os.environ["http_proxy"] = proxy_config`，
+    ///   而该配置项默认是**空列表 `[]`**，于是子进程环境里出现 `http_proxy=[]`；
+    /// - reqwest 0.13 会通过 **hyper-util 的 proxy matcher 自动读取**
+    ///   `HTTP_PROXY/http_proxy/HTTPS_PROXY/https_proxy/ALL_PROXY/all_proxy`
+    ///   （见 `hyper-util/src/matcher.rs`），**与我们自己有没有设置代理无关**；
+    /// - 结果：所有出站请求都走一个不存在的代理，统一报
+    ///   `error sending request for url (...)`，PandaScore / Valve 全军覆没。
+    ///
+    /// 我们只认自己的 `cfg.http_proxy`（读环境变量后由各 Provider 显式
+    /// `Proxy::all(...)` 设置），所以这里直接移除这些环境变量即可。
+    fn strip_proxy_env() {
+        for key in [
+            "http_proxy",
+            "HTTP_PROXY",
+            "https_proxy",
+            "HTTPS_PROXY",
+            "all_proxy",
+            "ALL_PROXY",
+        ] {
+            std::env::remove_var(key);
+        }
     }
 
     /// 归一化：空字符串 / 纯空白一律回退默认值。
@@ -127,7 +173,7 @@ impl Config {
         if self.mcp_bind.trim().is_empty() {
             self.mcp_bind = default_bind();
         }
-        // token / proxy 的空串等价于「未配置」。
+        // token 的空串等价于「未配置」。
         if self
             .pandascore_token
             .as_deref()
@@ -136,10 +182,17 @@ impl Config {
         {
             self.pandascore_token = None;
         }
+        // 代理：空值、以及**不像代理地址的值**一律视为未配置。
+        //
+        // 踩过的坑：AstrBot 的 core_lifecycle.py 会把自身配置的 `http_proxy`
+        // 原样写进环境变量（`os.environ["http_proxy"] = proxy_config`），
+        // 而该配置项默认是空列表 `[]`，于是子进程环境里出现 `http_proxy=[]`。
+        // 若把它当代理用，**所有出站请求都会失败**并报
+        // `error sending request for url (...)`——包括 PandaScore 在内的全部数据工具。
         if self
             .http_proxy
             .as_deref()
-            .map(|s| s.trim().is_empty())
+            .map(|s| !is_valid_proxy(s))
             .unwrap_or(false)
         {
             self.http_proxy = None;
@@ -258,5 +311,35 @@ mod tests {
         assert_eq!(cfg.http_timeout_secs, 9);
         assert_eq!(cfg.tz, "Asia/Shanghai");
         assert!(cfg.has_pandascore(), "读到 token 后应判定具备 PandaScore 能力");
+    }
+
+    /// 回归用例：AstrBot 的 `core_lifecycle.py` 会把自身配置的 `http_proxy`
+    /// 原样写进环境变量，而该配置项默认是空列表 `[]` ⇒ 子进程环境里出现
+    /// `http_proxy=[]`。若把它当代理用，**所有出站请求都会失败**
+    /// （实测报 `error sending request for url (...)`）。
+    #[test]
+    fn junk_proxy_values_are_ignored() {
+        for junk in ["[]", "", "  ", "none", "null", "[localhost]"] {
+            let json = format!(r#"{{"http_proxy":"{junk}"}}"#);
+            let parsed: Result<Config, _> = serde_json::from_str(&json);
+            let Ok(mut cfg) = parsed else { continue };
+            cfg.normalize();
+            assert!(cfg.http_proxy.is_none(), "`{junk}` 不应被当作代理地址");
+        }
+    }
+
+    #[test]
+    fn real_proxy_values_are_kept() {
+        for good in [
+            "http://127.0.0.1:7890",
+            "socks5://127.0.0.1:1080",
+            "127.0.0.1:7890",
+        ] {
+            let json = format!(r#"{{"http_proxy":"{good}"}}"#);
+            let parsed: Result<Config, _> = serde_json::from_str(&json);
+            let Ok(mut cfg) = parsed else { continue };
+            cfg.normalize();
+            assert_eq!(cfg.http_proxy.as_deref(), Some(good), "合法代理不应被丢弃");
+        }
     }
 }

@@ -464,6 +464,7 @@ Liquipedia 没有结构化排名表，于是换源。**Valve 官方在 GitHub �
 10. **HTTP 响应的 `Content-Type` 不带 `charset=utf-8`**：字节是正确的 UTF-8，标准 MCP 客户端无碍；若遇中文乱码的客户端，在 S5 加一层 tower 中间件改写为 `text/event-stream; charset=utf-8`。
 11. **rmcp 迭代快**：升级小版本前先跑 `cargo build` + Inspector，重点看 transport 与宏参数（见 §7.6）。
 12. **数据源为第三方聚合**：PandaScore 对小型赛事（尤其亚洲二线）覆盖有延迟，个别场次状态可能滞后于实际。
+13. **宿主环境的代理变量会被 reqwest 自动读取（已修）**：reqwest 0.13 通过 hyper-util 的 proxy matcher **自动**读 `HTTP_PROXY/http_proxy/HTTPS_PROXY/ALL_PROXY`，与自身是否显式设置代理无关。AstrBot 的 `core_lifecycle.py` 会把其配置项 `http_proxy`（默认空列表 `[]`）原样写进子进程环境 ⇒ `http_proxy=[]` ⇒ **所有出站请求全部失败**（`error sending request`）。当前版本启动时会先读取自己的 `http_proxy`（并要求是合法代理地址），然后**移除这些环境变量**，行为完全由本服务配置决定。
 
 ---
 
