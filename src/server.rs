@@ -20,7 +20,7 @@ use crate::config::Config;
 use crate::error::ApiError;
 // 注：本文件只用 ApiError 构造错误，ErrorCode 由 error 模块内部使用。
 use crate::models::{ApiFailure, ApiSuccess, Match, Meta, Ranking};
-use crate::providers::{hltv, liquipedia, pandascore};
+use crate::providers::{hltv, liquipedia, pandascore, valve};
 
 pub const SERVER_NAME: &str = "cs-mcp";
 pub const SERVER_VERSION: &str = "0.1.0";
@@ -58,6 +58,10 @@ impl CsServer {
 
         // 主源：无 token 时不构造（实时类 tool 因此返回 NO_DATA，绝不伪造）。
         if let Some(p) = pandascore::PandaScoreProvider::new(&cfg) {
+            providers.push(Box::new(p));
+        }
+        // 排名主源：Valve 官方 VRS（raw.githubusercontent 可直连）。
+        if let Some(p) = valve::ValveVrsProvider::new(&cfg) {
             providers.push(Box::new(p));
         }
         // 辅源：赛程/赛事/排名（无实时比分）。

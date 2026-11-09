@@ -17,7 +17,7 @@ cs-mcp  →  PandaScore（主）→ Liquipedia（辅）→ 5EPlay（可选）  �
 | S1 | 工程骨架、8 个 tool 全量注册、stdio 打通、`cs_ping` 可用 | ✅ **已完成并验证**（见 §7.1） |
 | S2 | PandaScore 真实接入（6 个数据 tool 已打通） | ✅ **已完成**（2 项受数据源限制，见 §9） |
 | S3 | 降级 / 缓存 / 限流 / 错误码全链路 | ✅ **已完成**（缓存命中实测 20575 ms → 106 ms，见 §7.7） |
-| S4 | Liquipedia + `cs_world_ranking` | ⚠️ **代码完成，排名源不可用**（见 §7.8 / §9 第 4 条） |
+| S4 | Liquipedia + `cs_world_ranking` | ✅ **已完成**（排名改用 **Valve 官方 VRS**，见 §7.9） |
 | S5–S7 | HTTP transport、联调、硬化验收 | ⏳ 待做 |
 
 > **S2 已完成**：`cs_live_matches` / `cs_upcoming_matches` / `cs_recent_results` / `cs_today_schedule` / `cs_team_matches` / `cs_match_detail` 已接 PandaScore 真实数据（含比分、直播源、+08:00 时间、中文队名别名）。
@@ -286,6 +286,23 @@ HTTP 方式则改为：
 | 网络附加现象 | ⚠️ 该站对本机 IP **间歇性封禁**：API 时通时 406、页面 403；必须严守 0.5 QPS |
 | 质量门禁 | ✅ `cargo build` / `clippy -- -D warnings` / **34 个测试** 全绿 |
 
+### 7.9 S4 补充：排名改用 Valve 官方 VRS（实测通过）
+
+Liquipedia 没有结构化排名表，于是换源。**Valve 官方在 GitHub 维护 VRS 数据**：
+`ValveSoftware/counter-strike_regional_standings` → `live/<年>/standings_global_YYYY_MM_DD.md`。
+
+| 项 | 结果 |
+|---|---|
+| 数据可直连 | ✅ `raw.githubusercontent.com` 国内网络可直连（不像 HLTV/bo3 被挡） |
+| 表格结构 | ✅ 干净 markdown 表格：`Standing | Points | Team Name | Roster | details` |
+| 定位最新文件 | ✅ GitHub contents API 列出 `live/<年>`，取 `standings_global_*` 字典序最大者（`YYYY_MM_DD` 即时间序），跨年回退看上一年 |
+| Provider 优先级 | ✅ `valve = 15`：低于 pandascore(10)，高于 liquipedia(20) |
+| **实测结果** | ✅ `cs_world_ranking{top:10}` → `src=[valve] kind=vrs stale=true`，返回 `#1 MOUZ 1960 / #2 Vitality 1922 / #3 FURIA 1912 / #4 Aurora 1860 / #5 Spirit 1842 …`，与官方文件逐条一致 |
+| 解析健壮性 | ✅ 5 个离线 fixture 单测（表头跳过、分隔行跳过、`top` 截断、垃圾输入、日期校验） |
+| 质量门禁 | ✅ `cargo build` / `clippy -- -D warnings` / **39 个测试** 全绿 |
+
+> 注意：Valve 排名**按月更新**，因此统一标记 `stale=true`；`kind` 用 `vrs` 与 Liquipedia 的 `world` 区分。
+
 ---
 
 ## 8. 数据源与实测结论（2026-10 实测）
@@ -325,7 +342,7 @@ HTTP 方式则改为：
 1. **`maps` 恒为空（数据源边界）**：PandaScore 的 CS2 `games[]` 只含 `position/status/winner`，**没有地图名与逐图比分**。留空是如实行为，不得编造；需要逐图数据只能换源。
 2. **`cs_recent_results` 上游不稳定**：`/csgo/matches/past` 在本机网络下高频 `[timeout]`/`[connect]`，实测成功率约 1/5（成功时能返回 48 小时内 79 场）。已加一次重试，S3 的 moka 缓存会进一步缓解。
 3. **`cs_match_detail` 的 403 语义偏保守**：PandaScore 对部分 match id 返回 403（与 token 无关），当前统一映射为 `AUTH_ERROR`。更准确的做法是区分「token 问题」与「该比赛不可查」，留待 S3 细化。
-4. **`cs_world_ranking` 目前无可用数据源**：Liquipedia 的 `Portal:Rankings` 实测只是个约 1KB 的入口页（0 表格），不含结构化排名表；官方排名在 HLTV（被 Cloudflare 拦截）与 Valve VRS。Provider 代码已完整实现并带自适应子页逻辑，一旦出现合规数据源改 `RANKING_PAGE` 或加新 Provider 即可启用，当前如实返回 `NO_DATA` 并说明原因。
+4. **`cs_world_ranking` 数据源为 Valve VRS（月度更新）**：官方排在 `ValveSoftware/counter-strike_regional_standings` 仓库，按月发布 markdown 表格 → 一律标记 `stale=true`。定位最新文件依赖 GitHub contents API（未鉴权 60 次/小时），配合排名缓存 3600s 无压力；若 API 被限流会返回 `RATE_LIMITED` 并降级到 Liquipedia（后者实测无排名表，最终如实 `NO_DATA`）。
 5. **中文队名覆盖有限**：`name_zh` 来自内置静态别名表（约 50 个常见队），未收录输出 `null`，**不做机器翻译**。新增队伍请改 `src/aliases.rs`。
 6. **HLTV 不可用**：403 + `cf-mitigated: challenge`，且 ToS 2.2 禁止爬取 → 默认关闭（`ENABLE_HLTV_SCRAPE=0`）。需要 HLTV 原始数据只能走 TLS 指纹伪装 sidecar 或代理，不在本 crate 范围。
 7. **限流是「软限流」**：PandaScore 令牌桶（1 QPS / burst 3）拿不到令牌时最多等待 2 秒后**放行**，而不是硬拒绝——宁可慢一点也不让用户请求无故失败；缓存已在绝大多数情况下避免重复打上游。Liquipedia 的 0.5 QPS 限流随 S4 接入。
@@ -357,8 +374,9 @@ cs-mcp/
     ├── ratelimit.rs     # governor 按 host 限流（S3 接入）
     └── providers/
         ├── mod.rs
-        ├── pandascore.rs   # 主源，S2 已实现 6 个 tool
-        ├── liquipedia.rs   # 辅源（S4）
+        ├── pandascore.rs   # 比赛主源（S2，6 个 tool）
+        ├── valve.rs        # 排名主源：官方 VRS（S4）
+        ├── liquipedia.rs   # 辅源（S4，排名无结构化表）
         └── hltv.rs         # 默认禁用
 ```
 
