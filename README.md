@@ -106,6 +106,38 @@ cargo build --release --target x86_64-pc-windows-gnu
 npx @modelcontextprotocol/inspector .\target\release\cs-mcp.exe
 ```
 
+### 4.4 一键自测（推荐，不依赖任何外部工具）
+
+仓库自带 `scripts/test-mcp.ps1`，直接以 stdio 拉起服务并按 MCP 协议跑握手 / `tools/list` / `tools/call`：
+
+```powershell
+cd cs-mcp
+
+# 列出 8 个 tool 及其 description（可直接贴进模型系统提示）
+.\scripts\test-mcp.ps1 -List
+
+# 只测一个 tool
+.\scripts\test-mcp.ps1 -Tool cs_ping
+.\scripts\test-mcp.ps1 -Tool cs_upcoming_matches -Args '{"hours":72}'
+
+# 全量跑一遍（含 cs_recent_results → cs_match_detail 的链式验证）
+.\scripts\test-mcp.ps1 -All
+```
+
+输出形如：
+
+```
+  cs_ping                OK       71 ms  count=1   src=[-]
+  cs_live_matches        OK     5925 ms  count=7   src=[pandascore]
+  cs_recent_results      OK     2853 ms  count=49  src=[pandascore]
+  cs_world_ranking       OK     4495 ms  count=1   src=[valve]
+结果: 通过 6 / 失败 1
+```
+
+> `-All` 里出现个别 `UPSTREAM_ERROR ... [timeout]`/`[connect]` 是**网络抖动**而非程序错误：
+> 看错误链末尾的标记即可区分（`[timeout]`/`[connect]` = 网络；`[decode]` 且无标记 = 数据格式）。
+> 先跑 `-Tool cs_ping` 确认 `pandascore_ready=true`，再判断是否为当前网络问题。
+
 ---
 
 ## 5. 客户端配置

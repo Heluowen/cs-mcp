@@ -145,6 +145,26 @@ impl ValveVrsProvider {
     }
 
     async fn fetch_markdown(&self, url: &str) -> Result<String, ProviderError> {
+        // raw.githubusercontent 偶发连接重置（实测出现 "error sending request"），
+        // 与 pandascore 一样做一次短退避重试。
+        let mut last: Option<ProviderError> = None;
+        for attempt in 0..2 {
+            match self.fetch_markdown_once(url).await {
+                Ok(md) => return Ok(md),
+                Err(e) => {
+                    last = Some(e);
+                    if attempt == 0 {
+                        tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+                    }
+                }
+            }
+        }
+        Err(last.unwrap_or_else(|| {
+            ProviderError::Upstream("下载 Valve 排名文件失败".to_string())
+        }))
+    }
+
+    async fn fetch_markdown_once(&self, url: &str) -> Result<String, ProviderError> {
         let resp = self
             .client
             .get(url)
