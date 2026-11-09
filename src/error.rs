@@ -95,6 +95,35 @@ pub enum ProviderError {
     NotImplemented(String),
 }
 
+/// 把 reqwest 错误连同底层 source 链一起打印，并标注类别。
+///
+/// 只看 `Display` 会把「DNS 失败 / TLS 失败 / 连接被拒 / 响应体读取中断」
+/// 统统显示成 `error sending request`，排障时必须看到根因。
+pub fn describe_reqwest(e: &reqwest::Error) -> String {
+    let mut out = e.to_string();
+
+    let mut src = std::error::Error::source(e);
+    while let Some(s) = src {
+        out.push_str(" <- ");
+        out.push_str(&s.to_string());
+        src = s.source();
+    }
+
+    if e.is_timeout() {
+        out.push_str(" [timeout]");
+    }
+    if e.is_connect() {
+        out.push_str(" [connect]");
+    }
+    if e.is_body() {
+        out.push_str(" [body]");
+    }
+    if e.is_decode() {
+        out.push_str(" [decode]");
+    }
+    out
+}
+
 impl ProviderError {
     /// 映射为对外错误码。
     ///

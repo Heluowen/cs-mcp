@@ -92,6 +92,30 @@ impl CsServer {
 
 // ---------------------------------------------------------------- 结果构造
 
+/// 读取若干候选环境变量（大小写都试），返回脱敏后的值。
+///
+/// - 不存在 → `None`
+/// - 存在但为空 → `"<empty>"`
+/// - 其他 → 截断到 60 字符
+fn masked_env(keys: &[&str]) -> Option<String> {
+    for key in keys {
+        if let Ok(v) = std::env::var(key) {
+            let t = v.trim();
+            if t.is_empty() {
+                return Some("<empty>".to_string());
+            }
+            return Some(if t.chars().count() > 60 {
+                let mut s: String = t.chars().take(60).collect();
+                s.push('…');
+                s
+            } else {
+                t.to_string()
+            });
+        }
+    }
+    None
+}
+
 /// 把任意可序列化载荷塞进 text 块。
 fn to_text(payload: &impl serde::Serialize, is_error: bool) -> Result<CallToolResult, McpError> {
     match serde_json::to_string(payload) {
@@ -253,6 +277,21 @@ impl CsServer {
                     "schedule": self.inner.cache.schedule.count().await,
                     "live": self.inner.cache.live.count().await,
                     "rank": self.inner.cache.rank.count().await,
+                },
+                // 运行时诊断：宿主（如 AstrBot）可能往子进程环境里写代理变量，
+                // 而 reqwest 会**自动**读取它们，导致所有出站请求失败。
+                // 这里把关键变量回显出来，便于一眼看出环境是否被污染。
+                "runtime": {
+                    "cwd": std::env::current_dir()
+                        .ok()
+                        .map(|p| p.display().to_string()),
+                    "env_count": std::env::vars().count(),
+                    "http_proxy": masked_env(&["http_proxy", "HTTP_PROXY"]),
+                    "https_proxy": masked_env(&["https_proxy", "HTTPS_PROXY"]),
+                    "all_proxy": masked_env(&["all_proxy", "ALL_PROXY"]),
+                    "no_proxy": masked_env(&["no_proxy", "NO_PROXY"]),
+                    "ssl_cert_file": masked_env(&["SSL_CERT_FILE"]),
+                    "ssl_cert_dir": masked_env(&["SSL_CERT_DIR"]),
                 }
             }],
             "meta": Meta::new(1, vec![], false),

@@ -79,7 +79,7 @@ impl ValveVrsProvider {
             .header("Accept", "application/vnd.github+json")
             .send()
             .await
-            .map_err(|e| ProviderError::Upstream(format!("列出 Valve 排名目录失败: {e}")))?;
+            .map_err(|e| ProviderError::Upstream(format!("列出 Valve 排名目录失败: {}", crate::error::describe_reqwest(&e))))?;
 
         let status = resp.status();
         if status == reqwest::StatusCode::NOT_FOUND {
@@ -100,7 +100,7 @@ impl ValveVrsProvider {
 
         resp.json::<Vec<ContentEntry>>()
             .await
-            .map_err(|e| ProviderError::Upstream(format!("解析目录列表失败: {e}")))
+            .map_err(|e| ProviderError::Upstream(format!("解析目录列表失败: {}", crate::error::describe_reqwest(&e))))
     }
 
     /// 找到最新的全球 standings 文件，返回 `(年份, 文件名)`。
@@ -157,7 +157,7 @@ impl ValveVrsProvider {
             .header("Accept", "application/vnd.github.raw")
             .send()
             .await
-            .map_err(|e| ProviderError::Upstream(format!("经 API 下载 Valve 排名失败: {e}")))?;
+            .map_err(|e| ProviderError::Upstream(format!("经 API 下载 Valve 排名失败: {}", crate::error::describe_reqwest(&e))))?;
 
         let status = resp.status();
         if !status.is_success() {
@@ -168,7 +168,7 @@ impl ValveVrsProvider {
 
         resp.text()
             .await
-            .map_err(|e| ProviderError::Upstream(format!("经 API 读取 Valve 排名失败: {e}")))
+            .map_err(|e| ProviderError::Upstream(format!("经 API 读取 Valve 排名失败: {}", crate::error::describe_reqwest(&e))))
     }
 
     async fn fetch_markdown(&self, url: &str) -> Result<String, ProviderError> {
@@ -197,7 +197,7 @@ impl ValveVrsProvider {
             .get(url)
             .send()
             .await
-            .map_err(|e| ProviderError::Upstream(format!("下载 Valve 排名文件失败: {e}")))?;
+            .map_err(|e| ProviderError::Upstream(format!("下载 Valve 排名文件失败: {}", crate::error::describe_reqwest(&e))))?;
 
         let status = resp.status();
         if !status.is_success() {
@@ -208,7 +208,7 @@ impl ValveVrsProvider {
 
         resp.text()
             .await
-            .map_err(|e| ProviderError::Upstream(format!("读取 Valve 排名文件失败: {e}")))
+            .map_err(|e| ProviderError::Upstream(format!("读取 Valve 排名文件失败: {}", crate::error::describe_reqwest(&e))))
     }
 }
 
