@@ -48,8 +48,6 @@ pub struct ValveVrsProvider {
 #[derive(Debug, Deserialize)]
 struct ContentEntry {
     name: String,
-    #[serde(default)]
-    download_url: Option<String>,
 }
 
 // ------------------------------------------------------------------ impl
@@ -105,8 +103,8 @@ impl ValveVrsProvider {
             .map_err(|e| ProviderError::Upstream(format!("解析目录列表失败: {e}")))
     }
 
-    /// 找到最新的全球 standings 文件（按 `YYYY_MM_DD` 字典序即时间序）。
-    async fn latest_global(&self) -> Result<(String, String), ProviderError> {
+    /// 找到最新的全球 standings 文件，返回 `(年份, 文件名)`。
+    async fn latest_global(&self) -> Result<(i32, String), ProviderError> {
         // 以 +08:00 的当前年份为准，同时回退看上一年（1 月初可能还没今年数据）。
         let tz = Config::cn_offset()
             .map_err(|e| ProviderError::Upstream(format!("时区初始化失败: {e}")))?;
@@ -115,7 +113,7 @@ impl ValveVrsProvider {
 
         for y in [year, year - 1] {
             let entries = self.list_year(y).await?;
-            let mut best: Option<(String, String)> = None;
+            let mut best: Option<String> = None;
             for e in entries {
                 let name = &e.name;
                 let Some(stem) = name
@@ -127,24 +125,50 @@ impl ValveVrsProvider {
                 if !is_date_stem(stem) {
                     continue;
                 }
-                let url = match &e.download_url {
-                    Some(u) if !u.is_empty() => u.clone(),
-                    _ => format!("{RAW_BASE}/live/{y}/{name}"),
-                };
                 // 字典序比较即可：YYYY_MM_DD 定长。
                 match &best {
-                    Some((best_stem, _)) if best_stem.as_str() >= stem => {}
-                    _ => best = Some((stem.to_string(), url)),
+                    Some(best_name) if best_name.as_str() >= name.as_str() => {}
+                    _ => best = Some(name.clone()),
                 }
             }
-            if let Some((stem, url)) = best {
-                return Ok((stem, url));
+            if let Some(name) = best {
+                return Ok((y, name));
             }
         }
 
         Err(ProviderError::NoData(
             "Valve 排名仓库中没有找到 standings_global_*.md".to_string(),
         ))
+    }
+
+    /// 通过 GitHub API 取文件原文（`Accept: application/vnd.github.raw`）。
+    ///
+    /// **为什么不直接用 `download_url`（raw.githubusercontent.com）**：
+    /// 实测该域名有 AAAA 记录，而本机 IPv6 不通；reqwest(rustls) 会优先尝试 IPv6，
+    /// 结果稳定报 `error sending request`（PowerShell/.NET 有 IPv4 回退所以看着正常）。
+    /// `api.github.com` 只有 A 记录，稳定可用。
+    /// 代价是每次排名取数消耗 2 次 API 额度（未鉴权 60 次/小时），
+    /// 配合 3600s 排名缓存完全够用。
+    async fn fetch_markdown_api(&self, year: i32, name: &str) -> Result<String, ProviderError> {
+        let url = format!("{API_CONTENTS}/{year}/{name}");
+        let resp = self
+            .client
+            .get(&url)
+            .header("Accept", "application/vnd.github.raw")
+            .send()
+            .await
+            .map_err(|e| ProviderError::Upstream(format!("经 API 下载 Valve 排名失败: {e}")))?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            return Err(ProviderError::Upstream(format!(
+                "经 API 下载 Valve 排名返回 HTTP {status}"
+            )));
+        }
+
+        resp.text()
+            .await
+            .map_err(|e| ProviderError::Upstream(format!("经 API 读取 Valve 排名失败: {e}")))
     }
 
     async fn fetch_markdown(&self, url: &str) -> Result<String, ProviderError> {
@@ -259,13 +283,23 @@ impl Provider for ValveVrsProvider {
     }
 
     async fn ranking(&self, top: u32) -> Result<Vec<Ranking>, ProviderError> {
-        let (stem, url) = self.latest_global().await?;
-        let md = self.fetch_markdown(&url).await?;
+        let (year, name) = self.latest_global().await?;
+
+        // 主路径：走 api.github.com（仅 IPv4，本机可稳定访问）。
+        // 回退路径：raw.githubusercontent（有 AAAA，IPv6 不通时会失败，但个别网络反而更顺）。
+        let md = match self.fetch_markdown_api(year, &name).await {
+            Ok(md) => md,
+            Err(primary_err) => {
+                tracing::warn!(error = %primary_err, "经 GitHub API 下载失败，回退到 raw.githubusercontent");
+                let url = format!("{RAW_BASE}/live/{year}/{name}");
+                self.fetch_markdown(&url).await?
+            }
+        };
 
         let entries = parse_markdown_table(&md, top);
         if entries.is_empty() {
             return Err(ProviderError::NoData(format!(
-                "Valve 排名文件 {stem} 中未解析出条目"
+                "Valve 排名文件 {name} 中未解析出条目"
             )));
         }
 
