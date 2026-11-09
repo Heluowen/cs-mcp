@@ -152,7 +152,7 @@ impl PandaScoreProvider {
             .timeout(cfg.http_timeout())
             // 连接阶段快速失败，避免整体超时被建连耗时吃掉。
             .connect_timeout(std::time::Duration::from_secs(3));
-        if let Some(proxy) = cfg.http_proxy.as_deref() {
+        if let Some(proxy) = cfg.cs_mcp_http_proxy.as_deref() {
             if let Ok(p) = reqwest::Proxy::all(proxy) {
                 builder = builder.proxy(p);
             }
@@ -699,7 +699,7 @@ mod tests {
             pandascore_token: Some("dummy".to_string()),
             enable_hltv_scrape: false,
             tz: "Asia/Shanghai".to_string(),
-            http_proxy: None,
+            cs_mcp_http_proxy: None,
             http_timeout_secs: 5,
             cache_ttl_schedule: 120,
             cache_ttl_live: 30,

@@ -34,7 +34,7 @@ pub struct HltvProvider {
 impl HltvProvider {
     pub fn new(cfg: &Config) -> Option<Self> {
         let mut builder = Client::builder().timeout(cfg.http_timeout());
-        if let Some(proxy) = cfg.http_proxy.as_deref() {
+        if let Some(proxy) = cfg.cs_mcp_http_proxy.as_deref() {
             if let Ok(p) = reqwest::Proxy::all(proxy) {
                 builder = builder.proxy(p);
             }

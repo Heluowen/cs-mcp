@@ -61,7 +61,7 @@ impl ValveVrsProvider {
             .timeout(cfg.http_timeout().min(std::time::Duration::from_secs(10)))
             .connect_timeout(std::time::Duration::from_secs(3))
             .user_agent(USER_AGENT);
-        if let Some(proxy) = cfg.http_proxy.as_deref() {
+        if let Some(proxy) = cfg.cs_mcp_http_proxy.as_deref() {
             if let Ok(p) = reqwest::Proxy::all(proxy) {
                 builder = builder.proxy(p);
             }

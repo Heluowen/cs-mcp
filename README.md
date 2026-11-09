@@ -255,7 +255,7 @@ HTTP 方式则改为：
 |---|---|---|
 | `PANDASCORE_TOKEN` | 空 | 缺失则实时比分不可用（`cs_live_matches` 返回 `NO_DATA`） |
 | `ENABLE_HLTV_SCRAPE` | `0` | HLTV 抓取开关，**默认关**，原因见 §8 |
-| `HTTP_PROXY` | 空 | 出站代理，如 `http://127.0.0.1:7890` |
+| `CS_MCP_HTTP_PROXY` | 空 | 出站代理，如 `http://127.0.0.1:7897`。**只认这个专属变量名**——通用的 `HTTP_PROXY`/`http_proxy` 会被忽略（见 §9 第 13 条） |
 | `HTTP_TIMEOUT_SECS` | `15` | 上游请求总超时（5s 读不完 50–100 条响应，见 §7.5） |
 | `CACHE_TTL_SCHEDULE` | `120` | 赛程缓存 TTL（秒） |
 | `CACHE_TTL_LIVE` | `30` | 实时缓存 TTL（秒） |

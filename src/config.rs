@@ -80,9 +80,15 @@ pub struct Config {
     #[serde(default = "default_tz")]
     pub tz: String,
 
-    /// 出站 HTTP 代理，例如 `http://127.0.0.1:7890`。
+    /// 出站 HTTP 代理，**只从专属变量 `CS_MCP_HTTP_PROXY` 读取**。
+    ///
+    /// 为什么不读通用的 `HTTP_PROXY` / `http_proxy`：
+    /// 宿主进程（AstrBot 等）经常把自己的代理设置写进子进程环境，而且可能是过期/已死的端口；
+    /// 一旦被继承，**所有出站请求都会走一条死代理**，报
+    /// `tunnel error <- tcp connect error <- 10061`，看起来像网络故障极难排查。
+    /// 用专属变量名可以彻底避免与宿主环境撞车。
     #[serde(default)]
-    pub http_proxy: Option<String>,
+    pub cs_mcp_http_proxy: Option<String>,
 
     /// 单次上游请求超时（秒）。
     #[serde(default = "default_http_timeout")]
@@ -136,7 +142,7 @@ impl Config {
         Ok(cfg)
     }
 
-    /// 清掉环境里的代理变量，让出站代理行为**完全由 `cfg.http_proxy` 决定**。
+    /// 清掉环境里的代理变量，让出站代理行为**完全由 `cfg.cs_mcp_http_proxy` 决定**。
     ///
     /// 踩过的坑（最隐蔽的一个）：
     /// - AstrBot 的 `core_lifecycle.py` 会执行 `os.environ["http_proxy"] = proxy_config`，
@@ -147,7 +153,7 @@ impl Config {
     /// - 结果：所有出站请求都走一个不存在的代理，统一报
     ///   `error sending request for url (...)`，PandaScore / Valve 全军覆没。
     ///
-    /// 我们只认自己的 `cfg.http_proxy`（读环境变量后由各 Provider 显式
+    /// 我们只认自己的 `cfg.cs_mcp_http_proxy`（读环境变量后由各 Provider 显式
     /// `Proxy::all(...)` 设置），所以这里直接移除这些环境变量即可。
     fn strip_proxy_env() {
         for key in [
@@ -190,12 +196,12 @@ impl Config {
         // 若把它当代理用，**所有出站请求都会失败**并报
         // `error sending request for url (...)`——包括 PandaScore 在内的全部数据工具。
         if self
-            .http_proxy
+            .cs_mcp_http_proxy
             .as_deref()
             .map(|s| !is_valid_proxy(s))
             .unwrap_or(false)
         {
-            self.http_proxy = None;
+            self.cs_mcp_http_proxy = None;
         }
     }
 
@@ -245,7 +251,7 @@ mod tests {
     /// 空串会原样进来，导致 `cs_ping` 输出空时区。
     #[test]
     fn empty_values_fall_back_to_defaults() {
-        let json = r#"{"tz":"","mcp_transport":"","mcp_bind":"","pandascore_token":"   ","http_proxy":""}"#;
+        let json = r#"{"tz":"","mcp_transport":"","mcp_bind":"","pandascore_token":"   ","cs_mcp_http_proxy":""}"#;
         let parsed: Result<Config, _> = serde_json::from_str(json);
         assert!(parsed.is_ok(), "配置反序列化失败");
         let mut cfg = match parsed {
@@ -259,7 +265,7 @@ mod tests {
         assert_eq!(cfg.mcp_transport, "stdio");
         assert_eq!(cfg.mcp_bind, "0.0.0.0:8080");
         assert!(cfg.pandascore_token.is_none());
-        assert!(cfg.http_proxy.is_none());
+        assert!(cfg.cs_mcp_http_proxy.is_none());
     }
 
     /// 非空配置必须原样保留，不被归一化误伤。
@@ -320,11 +326,11 @@ mod tests {
     #[test]
     fn junk_proxy_values_are_ignored() {
         for junk in ["[]", "", "  ", "none", "null", "[localhost]"] {
-            let json = format!(r#"{{"http_proxy":"{junk}"}}"#);
+            let json = format!(r#"{{"cs_mcp_http_proxy":"{junk}"}}"#);
             let parsed: Result<Config, _> = serde_json::from_str(&json);
             let Ok(mut cfg) = parsed else { continue };
             cfg.normalize();
-            assert!(cfg.http_proxy.is_none(), "`{junk}` 不应被当作代理地址");
+            assert!(cfg.cs_mcp_http_proxy.is_none(), "`{junk}` 不应被当作代理地址");
         }
     }
 
@@ -335,11 +341,11 @@ mod tests {
             "socks5://127.0.0.1:1080",
             "127.0.0.1:7890",
         ] {
-            let json = format!(r#"{{"http_proxy":"{good}"}}"#);
+            let json = format!(r#"{{"cs_mcp_http_proxy":"{good}"}}"#);
             let parsed: Result<Config, _> = serde_json::from_str(&json);
             let Ok(mut cfg) = parsed else { continue };
             cfg.normalize();
-            assert_eq!(cfg.http_proxy.as_deref(), Some(good), "合法代理不应被丢弃");
+            assert_eq!(cfg.cs_mcp_http_proxy.as_deref(), Some(good), "合法代理不应被丢弃");
         }
     }
 }
