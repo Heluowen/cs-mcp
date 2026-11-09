@@ -30,3 +30,6 @@ Thumbs.db
 
 # 说明：本仓库是**二进制 crate**，`Cargo.lock` 必须提交（保证可复现构建），
 # 因此这里刻意不忽略它。
+
+# �����غ�
+*_payload.json
