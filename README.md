@@ -172,19 +172,52 @@ cd cs-mcp
 
 ### 5.3 AstrBot（`C:\\Users\\<you>\\.astrbot\\data\\mcp_server.json`）
 
+> ⚠️ **AstrBot 有 MCP stdio 命令白名单**，只允许 `python / node / npx / uvx …` 这类启动器。
+> 直接写 `"command": "…\\cs-mcp.exe"` 会被拒绝：
+> `MCP stdio command 'cs-mcp' is not allowed. Allowed commands: bun, bunx, deno, node, …`
+>
+> 有 **两种** 解法，二选一。
+
+**方案 A（推荐，不用改任何全局配置）：用 `node` 当启动器**
+
+本项目自带 `scripts/mcp-launcher.js`，它以 `stdio: 'inherit'` 拉起 `cs-mcp.exe`，JSON-RPC 原样透传：
+
 ```json
 {
   "mcpServers": {
     "cs2": {
-      "command": "H:\\Deepseek-Harness\\Zone 1\\cs-mcp\\target\\release\\cs-mcp.exe",
-      "args": [],
+      "command": "node",
+      "args": ["H:\\Deepseek-Harness\\Zone 1\\cs-mcp\\scripts\\mcp-launcher.js"],
       "env": { "PANDASCORE_TOKEN": "YOUR_TOKEN", "TZ": "Asia/Shanghai" }
     }
   }
 }
 ```
 
-配好后在 AstrBot WebUI 的 MCP 面板点「测试连接」→「启用」。启用后 7 个 tool 会进入全局工具集。
+启动器会在 `target/release` → `target/debug` 里自动找二进制，也可用环境变量 `CS_MCP_EXE` 指定。
+
+**方案 B：放开白名单（注意会整体替换默认列表）**
+
+`ASTRBOT_MCP_STDIO_ALLOWED_COMMANDS` **是替换而非追加**，所以必须把默认项一起写上：
+
+```powershell
+[Environment]::SetEnvironmentVariable(
+  "ASTRBOT_MCP_STDIO_ALLOWED_COMMANDS",
+  "python,python3,py,node,npx,npm,pnpm,yarn,bun,bunx,deno,uv,uvx,cs-mcp",
+  "User")
+```
+
+设置后**重启 AstrBot**，然后 `mcp_server.json` 用最直接的写法：
+
+```json
+{ "mcpServers": { "cs2": { "command": "cs-mcp", "args": [],
+  "env": { "PANDASCORE_TOKEN": "YOUR_TOKEN", "TZ": "Asia/Shanghai" } } } }
+```
+
+（需把 `target\release` 加入 `PATH`，或直接写完整路径 `…\\cs-mcp.exe`。）
+
+配好后在 AstrBot WebUI 的 MCP 面板点「测试连接」→「启用」。启用后 8 个 tool 会进入全局工具集；
+日志里应出现 8 行 `Added llm tool: cs_*`。
 
 > AstrBot 侧直调路径（供插件壳使用）：
 > `context.provider_manager.llm_tools.mcp_server_runtime_view["cs2"].client.call_tool_with_reconnect(...)`
