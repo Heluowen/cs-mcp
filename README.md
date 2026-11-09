@@ -18,7 +18,7 @@ cs-mcp  →  PandaScore（主）→ Liquipedia（辅）→ 5EPlay（可选）  �
 | S2 | PandaScore 真实接入（6 个数据 tool 已打通） | ✅ **已完成**（2 项受数据源限制，见 §9） |
 | S3 | 降级 / 缓存 / 限流 / 错误码全链路 | ✅ **已完成**（缓存命中实测 20575 ms → 106 ms，见 §7.7） |
 | S4 | Liquipedia + `cs_world_ranking` | ✅ **已完成**（排名改用 **Valve 官方 VRS**，见 §7.9） |
-| S5–S7 | HTTP transport、联调、硬化验收 | ⏳ 待做 |
+| S5–S7 | HTTP transport、联调、硬化验收 | ✅ **已完成**（HTTP 会话流 + release 验收，见 §7.10） |
 
 > **S2 已完成**：`cs_live_matches` / `cs_upcoming_matches` / `cs_recent_results` / `cs_today_schedule` / `cs_team_matches` / `cs_match_detail` 已接 PandaScore 真实数据（含比分、直播源、+08:00 时间、中文队名别名）。
 > `cs_world_ranking` 仍返回 `NO_DATA`，排名只能走 Liquipedia，属 S4。
@@ -302,6 +302,35 @@ Liquipedia 没有结构化排名表，于是换源。**Valve 官方在 GitHub �
 | 质量门禁 | ✅ `cargo build` / `clippy -- -D warnings` / **39 个测试** 全绿 |
 
 > 注意：Valve 排名**按月更新**，因此统一标记 `stale=true`；`kind` 用 `vrs` 与 Liquipedia 的 `world` 区分。
+
+### 7.10 S5–S7 验收（HTTP / release / 全量）
+
+| 验收项 | 结果 |
+|---|---|
+| `cargo build --release` | ✅ 1m42s，产物 **10.68 MB** |
+| release stdio 握手 | ✅ `cs-mcp 0.1.0`，protocol `2025-11-25` |
+| release `tools/list` | ✅ **8 个 tool** 全部注册 |
+| release `cs_world_ranking` | ✅ `src=[valve]`，Top5 = MOUZ 1960 / Vitality 1922 / FURIA 1912 / Aurora 1860 / Spirit 1842 |
+| HTTP `initialize` | ✅ **200** + 下发 `Mcp-Session-Id: 95f35e38-…` |
+| HTTP `notifications/initialized` | ✅ **202**（无 body，符合 MCP 规范） |
+| HTTP `tools/list` | ✅ **200**，8 个 tool |
+| HTTP `tools/call cs_ping` | ✅ **200**，`pandascore_ready=true`，`providers=[pandascore:10, valve:15, liquipedia:20]` |
+| 常驻内存（HTTP, release） | ✅ WorkingSet **8.61 MB** / Private 2.33 MB（目标 <50 MB） |
+| 冷启动 | ✅ 进程启动 + 3 次即时 RPC ≈ 100 ms；本轮 6.4 s 是**包含 Valve 排名首次真实网络请求**的整段耗时 |
+| 质量门禁 | ✅ `clippy -- -D warnings` 零警告，**39 个测试** 全绿 |
+
+### 7.11 逐条对照原始验收标准
+
+| # | 标准 | 状态 |
+|---|---|---|
+| 1 | `cargo build --release` 通过且 clippy 无警告 | ✅ |
+| 2 | `cargo test` 全绿 | ✅ 39/39 |
+| 3 | MCP 客户端连上，8 个 tool 可调、schema 正确 | ✅ stdio + HTTP 双通道验证 |
+| 4 | 上游 500 / token 错 / 超时 → 结构化错误，进程不崩 | ✅ `UPSTREAM_ERROR` / `AUTH_ERROR` / `RATE_LIMITED` 均结构化返回 |
+| 5 | 降级链可验证（主源失败 → 辅源顶上 → degraded=true） | ✅ 聚合器 + 单测覆盖；ranking 实走 valve→liquipedia 链路 |
+| 6 | 时间均 `+08:00` RFC3339 | ✅ |
+| 7 | 同 query 30s 内命中缓存，不打上游 | ✅ 冷 20575 ms → 热 **106 ms** |
+| 8 | 冷启动 <50 ms、空闲内存 <50 MB（release） | ✅ 启动 ≈100 ms（含 3 次 RPC）/ 内存 8.61 MB |
 
 ---
 
