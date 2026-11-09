@@ -138,6 +138,11 @@ macro_rules! try_providers {
                     last_err = Some(e);
                 }
                 Err(err) => {
+                    // 「这个源不支持该查询」不算失败：否则 pandascore 的
+                    // `尚未实现 ranking` 会把 liquipedia 的真实错误盖掉。
+                    if matches!(err, ProviderError::NotImplemented(_)) {
+                        continue;
+                    }
                     degraded = true;
                     let e = err.to_api_error();
                     if first_err.is_none() {
@@ -149,7 +154,10 @@ macro_rules! try_providers {
         }
 
         Err(first_err.or(last_err).unwrap_or_else(|| {
-            ApiError::new(ErrorCode::NoData, "没有可用的数据源")
+            ApiError::new(
+                ErrorCode::NoData,
+                "没有数据源支持该查询（或所有源均返回空）",
+            )
         }))
     }};
 }

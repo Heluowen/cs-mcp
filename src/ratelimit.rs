@@ -30,6 +30,17 @@ impl HostLimiter {
         })
     }
 
+    /// 按「每 period 一次、突发 burst 次」创建。
+    ///
+    /// Liquipedia 要求 ≤1 req / 2s（即 0.5 QPS），`per_second` 表达不了这个周期。
+    pub fn with_period(period: std::time::Duration, burst: u32) -> Option<Self> {
+        let burst = NonZeroU32::new(burst.max(1))?;
+        let quota = Quota::with_period(period)?.allow_burst(burst);
+        Some(Self {
+            inner: RateLimiter::direct(quota),
+        })
+    }
+
     /// 非阻塞尝试获取许可。
     pub fn try_acquire(&self) -> bool {
         self.inner.check().is_ok()
